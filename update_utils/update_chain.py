@@ -39,6 +39,9 @@ load_dotenv()
 # Polymarket CTF Exchange V2 on Polygon (deployed 2026-03-31).
 # Migration from v1 occurred on 2026-04-28.
 CTF_EXCHANGE_V2 = "0xe111180000d2663c0091e4f400237545b87b996b"
+# Neg Risk CTF Exchange V2 (multi-outcome/neg-risk markets settle here; same
+# OrderFilled event shape as the CTF Exchange V2). E40.H patch 1.
+NEG_RISK_CTF_EXCHANGE_V2 = "0xe2222d279d744050d28e00520010520000310F59"
 V2_GENESIS_BLOCK = 84_902_353
 
 # OrderFilled(bytes32,address,address,uint8,uint256,uint256,uint256,uint256,bytes32,bytes32)
@@ -69,6 +72,10 @@ COLUMNS = [
     "takerAssetId",
     "takerAmountFilled",
     "transactionHash",
+    # E40.H patch 2: the OrderFilled event's per-fill fee (raw 1e6-scaled
+    # USDC units, as emitted). Appended last so v1-shaped readers that index
+    # by the original column positions keep working.
+    "fee",
 ]
 
 
@@ -128,7 +135,7 @@ def _decode_log(log, ts_by_block: dict) -> list:
     taker = "0x" + topics[3][-40:].lower()
 
     data_bytes = _hex_to_bytes(log.data)
-    side, token_id, maker_amt, taker_amt, _fee, _builder, _metadata = abi_decode(
+    side, token_id, maker_amt, taker_amt, fee, _builder, _metadata = abi_decode(
         _DATA_TYPES, data_bytes
     )
 
@@ -155,6 +162,7 @@ def _decode_log(log, ts_by_block: dict) -> list:
         taker_asset_id,
         str(taker_amt),
         tx_hash,
+        str(fee),  # E40.H patch 2: persist the per-fill fee
     ]
 
 
@@ -164,7 +172,7 @@ def _build_query(from_block: int, to_block: int) -> Query:
         to_block=to_block + 1,  # HyperSync to_block is exclusive
         logs=[
             LogSelection(
-                address=[CTF_EXCHANGE_V2],
+                address=[CTF_EXCHANGE_V2, NEG_RISK_CTF_EXCHANGE_V2],
                 topics=[[ORDERFILLED_TOPIC]],
             )
         ],

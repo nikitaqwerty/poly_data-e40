@@ -39,10 +39,10 @@ def _topic_addr(addr_40hex: str) -> str:
 
 def _make_log(side, token_id, maker_amt, taker_amt,
               maker="aa" * 20, taker="bb" * 20,
-              block_number=100, tx_hash="0x" + "cd" * 32):
+              block_number=100, tx_hash="0x" + "cd" * 32, fee=0):
     data = abi_encode(
         _DATA_TYPES,
-        [side, token_id, maker_amt, taker_amt, 0, b"\x00" * 32, b"\x00" * 32],
+        [side, token_id, maker_amt, taker_amt, fee, b"\x00" * 32, b"\x00" * 32],
     )
     return types.SimpleNamespace(
         topics=["0xsig", "0xorderhash", _topic_addr(maker), _topic_addr(taker)],
@@ -78,8 +78,9 @@ class TestHexToBytes:
 class TestDecodeLog:
     def test_maker_buys_side0(self):
         # side=0 -> maker pays USDC (makerAssetId "0"), receives the outcome token
-        log = _make_log(side=0, token_id=12345, maker_amt=3_400_000, taker_amt=5_000_000)
-        ts, maker, maker_aid, maker_amt, taker, taker_aid, taker_amt, txh = _decode_log(
+        log = _make_log(side=0, token_id=12345, maker_amt=3_400_000, taker_amt=5_000_000,
+                        fee=7_000)
+        ts, maker, maker_aid, maker_amt, taker, taker_aid, taker_amt, txh, fee = _decode_log(
             log, {100: 1_700_000_000}
         )
         assert ts == 1_700_000_000
@@ -90,11 +91,12 @@ class TestDecodeLog:
         assert maker_amt == "3400000"
         assert taker_amt == "5000000"
         assert txh == "0x" + "cd" * 32
+        assert fee == "7000"  # E40.H patch 2: fee persisted as the last column
 
     def test_maker_sells_side1(self):
         # side=1 -> maker gives the token, receives USDC (takerAssetId "0")
         log = _make_log(side=1, token_id=999, maker_amt=5_000_000, taker_amt=3_400_000)
-        _, _, maker_aid, _, _, taker_aid, _, _ = _decode_log(log, {100: 1})
+        _, _, maker_aid, _, _, taker_aid, _, _, _ = _decode_log(log, {100: 1})
         assert maker_aid == "999"
         assert taker_aid == "0"
 
@@ -119,6 +121,14 @@ class TestBuildQuery:
         # to_block is exclusive in HyperSync, so the helper passes to_block + 1.
         q = _build_query(100, 200)
         assert isinstance(q, hypersync.Query)
+
+    def test_selects_both_v2_exchanges(self):
+        # E40.H patch 1: the Neg Risk CTF Exchange V2 rides alongside the
+        # CTF Exchange V2 in the same log selection.
+        q = _build_query(100, 200)
+        addrs = [a.lower() for a in q.logs[0].address]
+        assert uc.CTF_EXCHANGE_V2.lower() in addrs
+        assert uc.NEG_RISK_CTF_EXCHANGE_V2.lower() in addrs
 
 
 class TestCursor:
